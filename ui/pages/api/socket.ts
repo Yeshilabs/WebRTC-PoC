@@ -45,6 +45,11 @@ const SocketHandler = (req:any, res:any) => {
             socket.broadcast.to(roomName).emit("offer", offer);
         });
 
+        socket.on("answer", (answer, roomName) => {
+            console.log('Received answer');
+            socket.broadcast.to(roomName).emit("answer", answer); // Sends Answer to the other peer in the room.
+          });
+
         socket.on("leave", (roomName) => {
             console.log('User left room: ', roomName);
             socket.leave(roomName);

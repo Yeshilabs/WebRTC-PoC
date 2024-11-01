@@ -10,12 +10,13 @@ import io, { type Socket } from 'socket.io-client';
 const Room = () => {
     useSocket();
     const params = useParams();
-    console.log("Room ID:", params.id);
+    console.log("Room ID:", params!.id);
     const rtcConnectionRef = useRef<RTCPeerConnection | null>(null);
     const socketRef = useRef<typeof Socket | null>(null); // Specify the type as `Socket | null`
     const userStreamRef = useRef<MediaStream | null>(null);
     const hostRef = useRef(false);
-    const [roomName, setRoomName] = useState(params.id);
+    const [roomName, setRoomName] = useState(params!.id);
+    const pendingCandidates = useRef<RTCIceCandidate[]>([]);
 
     const handleRoomCreated = () => {
         console.log('Room created');
@@ -23,18 +24,38 @@ const Room = () => {
     };
 
     const handleRoomJoined = () => {
-        console.log('Room joined');
-
+        if (socketRef.current) {
+            console.log('Room joined');
+            socketRef.current!.emit('ready', roomName);
+        } else {
+            console.log('Peer connection is not created');
+        }
     };
 
     const initiateCall = () => {
-        // When is this function called ? 
+        if (hostRef.current) {
+            console.log('Initiating call');
+            rtcConnectionRef.current = createPeerConnection();       
+            rtcConnectionRef.current
+                .createOffer()
+                .then((offer) => {
+                    console.log("Offer created");
+                    rtcConnectionRef.current!.setLocalDescription(offer);
+                    socketRef.current!.emit('offer', offer, roomName);
+                })
+                .catch((error) => {
+                    console.log(error);
+                });
+        }
     };
+
+
 
     const ICE_SERVERS = {
         iceServers: [
             {
-                urls: 'stun:stun.l.google.com:19302',
+                urls: 'stun:openrelay.metered.ca:80',
+
             }
         ],
     };
@@ -44,16 +65,26 @@ const Room = () => {
     const createPeerConnection = () => {
         // We create a RTC Peer Connection
         const connection = new RTCPeerConnection(ICE_SERVERS);
-
+        // if (hostRef.current) {
+        //     console.log("Host connection created");
+        //     connection.createOffer()
+        // .then((offer) => {
+        //     console.log("Offer created");
+        //     rtcConnectionRef.current!.setLocalDescription(offer);
+        //     socketRef.current!.emit('offer', offer, roomName);
+        // })
+        // .catch((error) => {
+        //     console.log(error);
+        // });
+        // }
+        
         // We implement our onicecandidate method for when we received a ICE candidate from the STUN server
         connection.onicecandidate = handleICECandidateEvent;
 
-        // We implement our onTrack method for when we receive tracks 
-        //TOOD: what is a track ????
-        connection.ontrack = handleTrackEvent;
         // Set up data channel for the host
         if (hostRef.current) {
             const dataChannel = connection.createDataChannel('jsonChannel');
+            console.log("Data channel created");
             dataChannel.onopen = handleDataChannelOpen;
             dataChannel.onmessage = handleDataChannelMessage;
             dataChannel.onclose = handleDataChannelClose;
@@ -61,14 +92,17 @@ const Room = () => {
         } else {
             // Handle receiving a data channel for non-host
             connection.ondatachannel = (event) => {
+                console.log("Data channel received");
+                console.log("data channel event", event);
                 dataChannelRef.current = event.channel;
                 dataChannelRef.current.onopen = handleDataChannelOpen;
                 dataChannelRef.current.onmessage = handleDataChannelMessage;
                 dataChannelRef.current.onclose = handleDataChannelClose;
             };
+            
         }
 
-        return connection;
+    return connection;
     }
 
     const handleDataChannelOpen = () => {
@@ -86,31 +120,90 @@ const Room = () => {
     };
 
     const handleICECandidateEvent = (event: any) => {
+        if (!rtcConnectionRef.current) {
+            console.log("Peer connection is not created");
+            return;
+        }
         if (event.candidate) {
+            console.log("Sending ICE candidate", event.candidate);
             socketRef.current!.emit('ice-candidate', event.candidate, roomName);
         }
     };
-
-    const handleTrackEvent = (event: any) => {
-        console.log('Track event');
-        // TODO what's going on here?
-    }
 
     const onPeerLeave = () => {
         console.log('Peer left');
     };
 
-    const handleReceivedOffer = () => {
-        console.log('Received offer');
-    };
+    // const handleReceivedOffer = (offer: any) => {
+    //     if (!hostRef.current) {
 
-    const handleAnswer = () => {
-        console.log('Received answer');
-    };
+    //         rtcConnectionRef.current = createPeerConnection();
+    //         rtcConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer))
+    //             .then(() => {
+    //                 console.log("Received offer");
+    //                 // Process pending ICE candidates
+    //                 pendingCandidates.current.forEach((candidate) => {
+    //                     rtcConnectionRef.current!.addIceCandidate(candidate).catch((e) => console.log(e));
+    //                 });
+    //                 pendingCandidates.current = []; // Clear the queue
+    //                 return rtcConnectionRef.current!.createAnswer();
+    //             })
+    //             .then((answer) => {
+    //                 rtcConnectionRef.current!.setLocalDescription(answer);
+    //                 socketRef.current!.emit('answer', answer, roomName);
+    //             })
+    //             .catch((error) => console.log('Error handling offer:', error));
+    //     }
+    // };
+    const handleReceivedOffer = (offer:any) => {
+        if (!hostRef.current) {
+          rtcConnectionRef.current = createPeerConnection();
+          rtcConnectionRef.current.setRemoteDescription(offer);
+          console.log("Received offer"); 
+          rtcConnectionRef.current
+            .createAnswer()
+            .then((answer) => {
+                console.log("Answer created");
+              rtcConnectionRef.current!.setLocalDescription(answer);
+              socketRef.current!.emit('answer', answer, roomName);
+            })
+            .catch((error) => {
+              console.log(error);
+            });
+        }
+      };
 
-    const handlerNewIceCandidateMsg = () => {
-        console.log('New ICE candidate received');
-    };
+
+      const handleAnswer = (answer:any) => {
+        console.log("Received answer");
+        rtcConnectionRef.current!
+          .setRemoteDescription(answer)
+          .catch((err) => console.log(err));
+      };
+
+    // const handlerNewIceCandidateMsg = (incoming: any) => {
+    //     const candidate = new RTCIceCandidate(incoming);
+    //     if (!rtcConnectionRef.current) {
+    //         console.log("Peer connection is not created");
+    //         return;
+    //     }
+    //     if (rtcConnectionRef.current && rtcConnectionRef.current.remoteDescription) {
+    //         rtcConnectionRef.current.addIceCandidate(candidate).catch((e) => console.log(e));
+    //     } else {
+    //         // Queue the candidate if remote description is not set yet
+    //         console.log("Queuing ICE candidate");
+    //         pendingCandidates.current.push(candidate);
+    //     }
+    // };
+
+    const handlerNewIceCandidateMsg = (incoming:any) => {
+        // We cast the incoming candidate to RTCIceCandidate
+        const candidate = new RTCIceCandidate(incoming);
+        rtcConnectionRef.current!
+          .addIceCandidate(candidate)
+          .catch((e) => console.log(e));
+      };
+
 
     useEffect(() => {
         socketRef.current = io(); // Initialize the socket connection
@@ -138,12 +231,22 @@ const Room = () => {
     }, [roomName]);
 
     const sendJSONData = (data: Record<string, any>) => {
+        if (!dataChannelRef.current) {
+            console.log("dataChannelRef is null");
+            return;
+        } else if (dataChannelRef.current.readyState != 'open') {
+            console.log("dataChannelRef =! open");
+            return;
+        }
+
         if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
             dataChannelRef.current.send(JSON.stringify(data));
         } else {
             console.log("Data channel is not open");
         }
     };
+
+
 
 
     // in the return statement we will have the json data that we want to send over.
@@ -158,6 +261,7 @@ const Room = () => {
 };
 
 export default Room;
+
 
 
 
