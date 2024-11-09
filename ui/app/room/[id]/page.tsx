@@ -4,9 +4,9 @@ import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import useSocket from '../../../hooks/useSocket';
 import io, { type Socket } from 'socket.io-client';
-
 // we want to be able to generate a proof and send that json over webRTC
-
+import { MyProgram, MyProof, handleProofGeneration } from '../../ZK/zkprogram';
+import { JsonProof } from 'o1js';
 const Room = () => {
     useSocket();
     const params = useParams();
@@ -35,7 +35,7 @@ const Room = () => {
     const initiateCall = () => {
         if (hostRef.current) {
             console.log('Initiating call');
-            rtcConnectionRef.current = createPeerConnection();       
+            rtcConnectionRef.current = createPeerConnection();
             rtcConnectionRef.current
                 .createOffer()
                 .then((offer) => {
@@ -49,8 +49,7 @@ const Room = () => {
         }
     };
 
-
-
+    
     const ICE_SERVERS = {
         iceServers: [
             {
@@ -77,7 +76,7 @@ const Room = () => {
         //     console.log(error);
         // });
         // }
-        
+
         // We implement our onicecandidate method for when we received a ICE candidate from the STUN server
         connection.onicecandidate = handleICECandidateEvent;
 
@@ -99,10 +98,10 @@ const Room = () => {
                 dataChannelRef.current.onmessage = handleDataChannelMessage;
                 dataChannelRef.current.onclose = handleDataChannelClose;
             };
-            
+
         }
 
-    return connection;
+        return connection;
     }
 
     const handleDataChannelOpen = () => {
@@ -134,80 +133,41 @@ const Room = () => {
         console.log('Peer left');
     };
 
-    // const handleReceivedOffer = (offer: any) => {
-    //     if (!hostRef.current) {
-
-    //         rtcConnectionRef.current = createPeerConnection();
-    //         rtcConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer))
-    //             .then(() => {
-    //                 console.log("Received offer");
-    //                 // Process pending ICE candidates
-    //                 pendingCandidates.current.forEach((candidate) => {
-    //                     rtcConnectionRef.current!.addIceCandidate(candidate).catch((e) => console.log(e));
-    //                 });
-    //                 pendingCandidates.current = []; // Clear the queue
-    //                 return rtcConnectionRef.current!.createAnswer();
-    //             })
-    //             .then((answer) => {
-    //                 rtcConnectionRef.current!.setLocalDescription(answer);
-    //                 socketRef.current!.emit('answer', answer, roomName);
-    //             })
-    //             .catch((error) => console.log('Error handling offer:', error));
-    //     }
-    // };
-    const handleReceivedOffer = (offer:any) => {
+    const handleReceivedOffer = (offer: any) => {
         if (!hostRef.current) {
-          rtcConnectionRef.current = createPeerConnection();
-          rtcConnectionRef.current.setRemoteDescription(offer);
-          console.log("Received offer"); 
-          rtcConnectionRef.current
-            .createAnswer()
-            .then((answer) => {
-                console.log("Answer created");
-              rtcConnectionRef.current!.setLocalDescription(answer);
-              socketRef.current!.emit('answer', answer, roomName);
-            })
-            .catch((error) => {
-              console.log(error);
-            });
+            rtcConnectionRef.current = createPeerConnection();
+            rtcConnectionRef.current.setRemoteDescription(offer);
+            console.log("Received offer");
+            rtcConnectionRef.current
+                .createAnswer()
+                .then((answer) => {
+                    console.log("Answer created");
+                    rtcConnectionRef.current!.setLocalDescription(answer);
+                    socketRef.current!.emit('answer', answer, roomName);
+                })
+                .catch((error) => {
+                    console.log(error);
+                });
         }
-      };
+    };
 
 
-      const handleAnswer = (answer:any) => {
+    const handleAnswer = (answer: any) => {
         console.log("Received answer");
         rtcConnectionRef.current!
-          .setRemoteDescription(answer)
-          .catch((err) => console.log(err));
-      };
-
-    // const handlerNewIceCandidateMsg = (incoming: any) => {
-    //     const candidate = new RTCIceCandidate(incoming);
-    //     if (!rtcConnectionRef.current) {
-    //         console.log("Peer connection is not created");
-    //         return;
-    //     }
-    //     if (rtcConnectionRef.current && rtcConnectionRef.current.remoteDescription) {
-    //         rtcConnectionRef.current.addIceCandidate(candidate).catch((e) => console.log(e));
-    //     } else {
-    //         // Queue the candidate if remote description is not set yet
-    //         console.log("Queuing ICE candidate");
-    //         pendingCandidates.current.push(candidate);
-    //     }
-    // };
-
-    const handlerNewIceCandidateMsg = (incoming:any) => {
+            .setRemoteDescription(answer)
+            .catch((err) => console.log(err));
+    };
+    const handlerNewIceCandidateMsg = (incoming: any) => {
         // We cast the incoming candidate to RTCIceCandidate
         const candidate = new RTCIceCandidate(incoming);
         rtcConnectionRef.current!
-          .addIceCandidate(candidate)
-          .catch((e) => console.log(e));
-      };
-
+            .addIceCandidate(candidate)
+            .catch((e) => console.log(e));
+    };
 
     useEffect(() => {
         socketRef.current = io(); // Initialize the socket connection
-
         // First we join a room
         socketRef.current.emit('join', roomName);
 
@@ -222,15 +182,16 @@ const Room = () => {
         socketRef.current!.on('offer', handleReceivedOffer);
         socketRef.current!.on('answer', handleAnswer);
         socketRef.current!.on('ice-candidate', handlerNewIceCandidateMsg);
-
+        // generate proof client side
         // Clean up when the component unmounts
+        //handleProofGeneration();
         return () => {
             socketRef.current?.disconnect(); // Use optional chaining to ensure safe cleanup
             socketRef.current = null;
         };
     }, [roomName]);
 
-    const sendJSONData = (data: Record<string, any>) => {
+    const sendJSONData = (data: JsonProof) => {
         if (!dataChannelRef.current) {
             console.log("dataChannelRef is null");
             return;
@@ -246,22 +207,51 @@ const Room = () => {
         }
     };
 
-
-
+    // We want to send the proof over the data channel
+    // We will call the sendJSONData function with the proof as an argument
 
     // in the return statement we will have the json data that we want to send over.
+
+    const [proofData, setProofData] = useState<JsonProof | null>(null);
+
+    // const handleProofGeneration = async () => {
+    //     try {
+    //         console.log("generating proof");
+    //         ZkProgram.Proof(MyProgram);
+    //         await MyProgram.compile();
+    //         console.log("program compiled");
+    //         const proof = await MyProgram.baseCase();
+    //         console.log("Here is the proof...");
+    //         const proofJSON = proof.toJSON();
+    //         setProofData(proofJSON);
+    //         sendJSONData(proofJSON);
+    //     } catch (error) {
+    //         console.error("Error generating proof:", error);
+    //     }
+    // };
+
     return (
-        <div>
+        <div className="flex flex-col items-center space-y-2">
             <p>Hey</p>
-            <button onClick={() => sendJSONData({ message: "Hello, peer!" })}>
+            <button
+                onClick={() => {
+                    //testProof();
+                    handleProofGeneration().then( JsonProof => {
+                        console.log("proof generated", JsonProof);
+                        sendJSONData(JsonProof);
+                    }).catch((error) => {
+                        console.error("Error generating proof:", error);
+                    });
+                    //sendJSONData({ message: "Hello, peer!" });
+                }}
+                className="px-4 py-2 text-white bg-blue-500 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
                 Send JSON Data
             </button>
         </div>
     );
 };
-
 export default Room;
-
 
 
 
