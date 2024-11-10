@@ -9,7 +9,7 @@ import {
     Poseidon,
   } from 'o1js';
   
-  export { MyProgram, MyProof, handleProofGeneration };
+  export {generateBaseCaseProof};
   
   let MyProgram = ZkProgram({
     name: 'example-with-output',
@@ -34,12 +34,12 @@ import {
   
   const MyProof = ZkProgram.Proof(MyProgram);
   
-  const handleProofGeneration = async () => {
+  const generateBaseCaseProof = async () => {
         console.log("compiling program");
         await MyProgram.compile();
         console.log("program compiled");
         const proof = await MyProgram.baseCase();
-        console.log("Here is the proof...");
+        console.log("generated proof");
         const proofJSON = proof.toJSON();
         return proofJSON;
 }
